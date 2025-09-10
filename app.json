@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Continhas App",
+    "slug": "continhas-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/save-money.gif",
+    "scheme": "continhasapp",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/piggy-bank16.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.jvitorpereira.continhasapp"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/save-money.gif",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0000"
+        }
+      ],
+      "expo-sqlite"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d89ad863-57f7-4e04-b9cd-8a2ebe68d65e"
+      }
+    }
+  }
+}
