@@ -12,14 +12,16 @@ import {
     View,
 } from 'react-native';
 import { FixedBill } from '../models/FixedBill';
+import { Profile } from '../models/Profile';
 import { FixedBillService } from '../services/FixedBillService';
 import { formatCurrencyInput, getCurrencyValue } from '../utils/currency';
 
 interface FixedBillsScreenProps {
   onBack: () => void;
+  currentProfile: Profile;
 }
 
-export default function FixedBillsScreen({ onBack }: FixedBillsScreenProps) {
+export default function FixedBillsScreen({ onBack, currentProfile }: FixedBillsScreenProps) {
   const db = useSQLiteContext();
   const [fixedBills, setFixedBills] = useState<FixedBill[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,7 +38,7 @@ export default function FixedBillsScreen({ onBack }: FixedBillsScreenProps) {
 
   const loadFixedBills = async () => {
     try {
-      const bills = await FixedBillService.getAllFixedBills(db);
+      const bills = await FixedBillService.getAllFixedBills(db, currentProfile.id);
       setFixedBills(bills);
     } catch (error) {
       console.error('Erro ao carregar contas fixas:', error);

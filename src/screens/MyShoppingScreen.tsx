@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import PieChart from 'react-native-pie-chart';
 import { PRODUCT_CATEGORIES } from '../enums/ProductCategory';
+import { Profile } from '../models/Profile';
 import { SavedShoppingItem } from '../models/SavedShoppingItem';
 import { SavedShoppingList } from '../models/SavedShoppingList';
 import { ShoppingService } from '../services/ShoppingService';
@@ -26,6 +27,7 @@ const { width } = Dimensions.get('window');
 
 interface MyShoppingScreenProps {
   onBack: () => void;
+  currentProfile: Profile;
 }
 
 interface CategoryData {
@@ -34,7 +36,7 @@ interface CategoryData {
   color: string;
 }
 
-export default function MyShoppingScreen({ onBack }: MyShoppingScreenProps) {
+export default function MyShoppingScreen({ onBack, currentProfile }: MyShoppingScreenProps) {
   const db = useSQLiteContext();
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -74,10 +76,10 @@ export default function MyShoppingScreen({ onBack }: MyShoppingScreenProps) {
       const month = selectedMonth;
       
       // Buscar mês de compras
-      const shoppingMonth = await ShoppingService.getOrCreateShoppingMonth(db, year, month);
+      const shoppingMonth = await ShoppingService.getOrCreateShoppingMonth(db, year, month, currentProfile.id);
       
       // Buscar listas salvas do mês
-      const lists = await ShoppingService.getSavedShoppingLists(db, shoppingMonth.id);
+      const lists = await ShoppingService.getSavedShoppingLists(db, shoppingMonth.id, currentProfile.id);
       console.log("🚀 ~ loadSavedLists ~ lists:", lists)
       setSavedLists(lists);
       

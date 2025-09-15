@@ -13,15 +13,17 @@ import {
     View,
 } from 'react-native';
 import { Card } from '../models/Card';
+import { Profile } from '../models/Profile';
 import { CardService } from '../services/CardService';
 import { CardBrand } from '../types/Payment';
 
 interface AddCardScreenProps {
   onBack: () => void;
   onCardAdded: (cardId?: string) => void;
+  currentProfile: Profile;
 }
 
-export default function AddCardScreen({ onBack, onCardAdded }: AddCardScreenProps) {
+export default function AddCardScreen({ onBack, onCardAdded, currentProfile }: AddCardScreenProps) {
   const db = useSQLiteContext();
   const [nickname, setNickname] = useState('');
   const [lastFourDigits, setLastFourDigits] = useState('');
@@ -37,7 +39,7 @@ export default function AddCardScreen({ onBack, onCardAdded }: AddCardScreenProp
   const loadCards = async () => {
     setIsLoadingCards(true);
     try {
-      const allCards = await CardService.getAllCards(db);
+      const allCards = await CardService.getAllCards(db, currentProfile.id);
       setCards(allCards);
     } catch (error) {
       console.error('Erro ao carregar cartões:', error);

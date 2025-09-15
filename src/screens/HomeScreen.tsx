@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useSQLiteContext } from 'expo-sqlite';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -12,6 +12,8 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { useSQLite } from '../contexts/SQLiteContext';
+import { Profile } from '../models/Profile';
 import { Transaction } from '../models/Transaction';
 import { TransactionService } from '../services/TransactionService';
 
@@ -23,15 +25,18 @@ interface HomeScreenProps {
   onMyExpenses: () => void;
   onSavings: () => void;
   onShopping: () => void;
+  onProfileManagement: () => void;
+  currentProfile: Profile;
 }
 
-export default function HomeScreen({ onAddTransaction, onViewDetails, onMyExpenses, onSavings, onShopping }: HomeScreenProps) {
-  const db = useSQLiteContext();
+export default function HomeScreen({ onAddTransaction, onViewDetails, onMyExpenses, onSavings, onShopping, onProfileManagement, currentProfile }: HomeScreenProps) {
+  const { database: db } = useSQLite();
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [monthlyBalance, setMonthlyBalance] = useState(0);
   const [totalDebts, setTotalDebts] = useState(0);
   const [totalBalance, setTotalBalance] = useState(0);
   const [isMenuExpanded, setIsMenuExpanded] = useState(true);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -52,10 +57,10 @@ export default function HomeScreen({ onAddTransaction, onViewDetails, onMyExpens
       const currentYear = now.getFullYear();
 
       const [recent, monthly, debts, balance] = await Promise.all([
-        TransactionService.getRecentTransactions(db, 5),
-        TransactionService.getMonthlyBalance(db, currentYear, currentMonth),
-        TransactionService.getTotalDebts(db),
-        TransactionService.getTotalBalance(db)
+        TransactionService.getRecentTransactions(db, 5, currentProfile.id),
+        TransactionService.getMonthlyBalance(db, currentYear, currentMonth, currentProfile.id),
+        TransactionService.getTotalDebts(db, currentProfile.id),
+        TransactionService.getTotalBalance(db, currentProfile.id)
       ]);
 
       setRecentTransactions(recent);
@@ -126,8 +131,19 @@ export default function HomeScreen({ onAddTransaction, onViewDetails, onMyExpens
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       
       <View style={styles.header}>
-        <Text style={styles.title}>Continhas.</Text>
-        <TouchableOpacity style={styles.settingsButton}>
+        <View style={styles.profileInfo}>
+          <View style={styles.profileIcon}>
+            <Ionicons name={currentProfile.icon as any} size={24} color="#2C3E50" />
+          </View>
+          <View style={styles.profileText}>
+            <Text style={styles.profileName}>{currentProfile.name}</Text>
+            <Text style={styles.appTitle}>Continhas.</Text>
+          </View>
+        </View>
+        <TouchableOpacity 
+          style={styles.settingsButton}
+          onPress={() => setShowSettingsModal(true)}
+        >
           <Ionicons name="settings-outline" size={24} color="#000" />
         </TouchableOpacity>
       </View>
@@ -256,6 +272,33 @@ export default function HomeScreen({ onAddTransaction, onViewDetails, onMyExpens
             </ScrollView>
           )}
         </View>
+
+        {/* Modal de Configurações */}
+        <Modal
+          visible={showSettingsModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowSettingsModal(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowSettingsModal(false)}
+          >
+            <View style={styles.settingsMenu}>
+              <TouchableOpacity
+                style={styles.settingsMenuItem}
+                onPress={() => {
+                  setShowSettingsModal(false);
+                  onProfileManagement();
+                }}
+              >
+                <Ionicons name="person-outline" size={24} color="#2C3E50" />
+                <Text style={styles.settingsMenuText}>Alterar Perfil</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
     </View>
   );
 }
@@ -297,15 +340,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
-    marginTop: 20,
+    marginTop: 35,
   },
-  title: {
-    fontSize: 28,
+  profileInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  profileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  profileText: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2C3E50',
+    marginBottom: 2,
+  },
+  appTitle: {
+    fontSize: 25,
     fontWeight: 'bold',
-    color: '#000000',
+    color: '#2C3E50',
   },
   settingsButton: {
     padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsMenu: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 20,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  settingsMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  settingsMenuText: {
+    fontSize: 16,
+    color: '#2C3E50',
+    marginLeft: 12,
+    fontWeight: '500',
   },
   summaryCard: {
     backgroundColor: '#2C3E50',

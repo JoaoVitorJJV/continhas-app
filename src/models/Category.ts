@@ -3,6 +3,6 @@ export interface Category {
   name: string;
   icon: string;
   color: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'fixed_bill';
   created_at: string;
 }

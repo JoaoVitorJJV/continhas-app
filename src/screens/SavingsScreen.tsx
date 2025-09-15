@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { Profile } from '../models/Profile';
 import { Transaction } from '../models/Transaction';
 import { TransactionService } from '../services/TransactionService';
 
@@ -17,9 +18,10 @@ const { width } = Dimensions.get('window');
 
 interface SavingsScreenProps {
   onBack: () => void;
+  currentProfile: Profile;
 }
 
-export default function SavingsScreen({ onBack }: SavingsScreenProps) {
+export default function SavingsScreen({ onBack, currentProfile }: SavingsScreenProps) {
   const db = useSQLiteContext();
   const [savings, setSavings] = useState<Transaction[]>([]);
   const [totalSavings, setTotalSavings] = useState(0);
@@ -30,7 +32,7 @@ export default function SavingsScreen({ onBack }: SavingsScreenProps) {
 
   const loadSavings = async () => {
     try {
-      const allTransactions = await TransactionService.getAllTransactions(db);
+      const allTransactions = await TransactionService.getAllTransactions(db, currentProfile.id);
       const savingsTransactions = allTransactions.filter(t => t.type === 'income');
       setSavings(savingsTransactions);
       

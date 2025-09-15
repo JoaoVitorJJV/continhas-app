@@ -3,24 +3,25 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Alert,
-    Dimensions,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View
+  Alert,
+  Dimensions,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 import { PRODUCT_CATEGORIES } from '../enums/ProductCategory';
 import { Product } from '../models/Product';
+import { Profile } from '../models/Profile';
 import { SavedShoppingList } from '../models/SavedShoppingList';
 import { ShoppingItem } from '../models/ShoppingItem';
 import { ShoppingList } from '../models/ShoppingList';
@@ -37,9 +38,10 @@ interface ShoppingScreenProps {
   onNewShopping: () => void;
   onShoppingList: () => void;
   onSettings: () => void;
+  currentProfile: Profile;
 }
 
-export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingList, onSettings }: ShoppingScreenProps) {
+export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingList, onSettings, currentProfile }: ShoppingScreenProps) {
   const db = useSQLiteContext();
   const [shoppingMonth, setShoppingMonth] = useState<ShoppingMonth | null>(null);
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
@@ -109,7 +111,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
 
   const loadShoppingMonth = async () => {
     try {
-      const month = await ShoppingService.getOrCreateShoppingMonth(db, selectedYear, selectedMonth);
+      const month = await ShoppingService.getOrCreateShoppingMonth(db, selectedYear, selectedMonth, currentProfile.id);
       setShoppingMonth(month);
       
       // Carregar limite do vale das configurações
@@ -144,7 +146,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
 
   const loadProducts = async () => {
     try {
-      const allProducts = await ShoppingService.getAllProducts(db);
+      const allProducts = await ShoppingService.getAllProducts(db, currentProfile.id);
       setProducts(allProducts);
     } catch (error) {
       console.error('Erro ao carregar produtos:', error);
@@ -153,7 +155,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
 
   const loadShoppingLists = async () => {
     try {
-      const lists = await ShoppingListService.getAllShoppingLists(db);
+      const lists = await ShoppingListService.getAllShoppingLists(db, currentProfile.id);
       setShoppingLists(lists);
       if (lists.length > 0 && !selectedShoppingList) {
         setSelectedShoppingList(lists[0]);
@@ -167,7 +169,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
     if (!shoppingMonth) return;
     
     try {
-      const lists = await ShoppingService.getSavedShoppingLists(db, shoppingMonth.id);
+      const lists = await ShoppingService.getSavedShoppingLists(db, shoppingMonth.id, currentProfile.id);
       setSavedLists(lists);
     } catch (error) {
       console.error('Erro ao carregar listas salvas:', error);
@@ -181,7 +183,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
     }
 
     try {
-      await ShoppingService.saveShoppingList(db, shoppingMonth.id, saveListName.trim(), shoppingItems);
+      await ShoppingService.saveShoppingList(db, shoppingMonth.id, saveListName.trim(), shoppingItems, currentProfile.id);
       
       // Limpar todos os itens da lista atual após salvar
       await ShoppingService.clearShoppingItems(db, shoppingMonth.id);
@@ -279,7 +281,8 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
         quantityValue,
         mode === 'withName' ? productName.trim() : undefined,
         undefined,
-        category || undefined
+        category || undefined,
+        currentProfile.id
       );
       
       setProductName('');
@@ -492,6 +495,7 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
   const isOverLimit = remainingAmount < 0;
 
   return (
+    <TouchableWithoutFeedback>
     <KeyboardAvoidingView 
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1123,6 +1127,8 @@ export default function NewShoppingScreen({ onBack, onNewShopping, onShoppingLis
         </View>
       </Modal>
     </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
+
   );
 }
 

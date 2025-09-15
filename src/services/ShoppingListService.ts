@@ -4,18 +4,19 @@ import { ShoppingList } from '../models/ShoppingList';
 import { ShoppingListItem } from '../models/ShoppingListItem';
 
 export class ShoppingListService {
-  static async createShoppingList(db: SQLiteDatabase, name: string): Promise<ShoppingList> {
+  static async createShoppingList(db: SQLiteDatabase, name: string, profileId: string): Promise<ShoppingList> {
     try {
       const id = `list_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       await db.runAsync(
-        'INSERT INTO shopping_lists (id, name) VALUES (?, ?)',
-        [id, name]
+        'INSERT INTO shopping_lists (id, name, profile_id) VALUES (?, ?, ?)',
+        [id, name, profileId]
       );
 
       return {
         id,
         name,
+        profile_id: profileId,
         created_at: new Date().toISOString()
       };
     } catch (error) {
@@ -24,10 +25,11 @@ export class ShoppingListService {
     }
   }
 
-  static async getAllShoppingLists(db: SQLiteDatabase): Promise<ShoppingList[]> {
+  static async getAllShoppingLists(db: SQLiteDatabase, profileId: string): Promise<ShoppingList[]> {
     try {
       const lists = await db.getAllAsync<ShoppingList>(
-        'SELECT * FROM shopping_lists ORDER BY created_at DESC'
+        'SELECT * FROM shopping_lists WHERE profile_id = ? ORDER BY created_at DESC',
+        [profileId]
       );
       return lists;
     } catch (error) {
@@ -52,7 +54,8 @@ export class ShoppingListService {
     quantity: number = 1,
     durationDays?: number,
     productId?: string,
-    category?: string
+    category?: string,
+    profileId?: string
   ): Promise<ShoppingListItem> {
     try {
       const id = `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -60,20 +63,51 @@ export class ShoppingListService {
       // Se tem productId, usar ele, senão criar produto
       let finalProductId = productId;
       if (!productId) {
-        const existingProduct = await db.getFirstAsync<Product>(
-          'SELECT * FROM products WHERE name = ?',
-          [name.trim()]
-        );
-
-        if (existingProduct) {
-          finalProductId = existingProduct.id;
-        } else {
-          const productIdNew = `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          await db.runAsync(
-            'INSERT INTO products (id, name, category) VALUES (?, ?, ?)',
-            [productIdNew, name.trim(), category || null]
+        try {
+          const existingProduct = await db.getFirstAsync<Product>(
+            'SELECT * FROM products WHERE name = ? AND profile_id = ?',
+            [name.trim(), profileId]
           );
-          finalProductId = productIdNew;
+
+          if (existingProduct) {
+            finalProductId = existingProduct.id;
+          } else {
+            const productIdNew = `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            await db.runAsync(
+              'INSERT INTO products (id, name, category, profile_id) VALUES (?, ?, ?, ?)',
+              [productIdNew, name.trim(), category || null, profileId]
+            );
+            finalProductId = productIdNew;
+          }
+        } catch (productError: any) {
+          // Se houve erro de constraint, tentar buscar o produto existente
+          if (productError.message?.includes('UNIQUE constraint failed')) {
+            console.log('Constraint UNIQUE falhou para produto, tentando buscar existente...');
+            
+            // Tentar buscar com profile_id primeiro
+            let existingProduct = await db.getFirstAsync<Product>(
+              'SELECT * FROM products WHERE name = ? AND profile_id = ?',
+              [name.trim(), profileId]
+            );
+            
+            // Se não encontrou, tentar buscar sem profile_id (dados antigos)
+            if (!existingProduct) {
+              existingProduct = await db.getFirstAsync<Product>(
+                'SELECT * FROM products WHERE name = ?',
+                [name.trim()]
+              );
+            }
+            
+            if (existingProduct) {
+              finalProductId = existingProduct.id;
+              console.log('Produto existente encontrado:', existingProduct.name);
+            } else {
+              console.error('Erro ao criar produto e não foi possível encontrar existente:', productError);
+              throw productError;
+            }
+          } else {
+            throw productError;
+          }
         }
       }
 

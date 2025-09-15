@@ -11,12 +11,21 @@ export const initDatabase = async (): Promise<void> => {
     await db.execAsync(`
       PRAGMA journal_mode = WAL;
       
+      CREATE TABLE IF NOT EXISTS profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon TEXT NOT NULL,
+        is_default INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      
       CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         icon TEXT NOT NULL,
         color TEXT NOT NULL,
         type TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -27,6 +36,7 @@ export const initDatabase = async (): Promise<void> => {
         type TEXT NOT NULL,
         category TEXT NOT NULL,
         date DATETIME NOT NULL,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         payment_method TEXT,
         card_id TEXT,
@@ -43,6 +53,7 @@ export const initDatabase = async (): Promise<void> => {
         brand TEXT NOT NULL,
         last_four_digits TEXT NOT NULL,
         nickname TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -51,15 +62,18 @@ export const initDatabase = async (): Promise<void> => {
         year INTEGER NOT NULL,
         month INTEGER NOT NULL,
         voucher_limit REAL DEFAULT 0,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(year, month)
+        UNIQUE(year, month, profile_id)
       );
       
       CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         category TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        profile_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(name, profile_id)
       );
       
       CREATE TABLE IF NOT EXISTS shopping_items (
@@ -83,6 +97,7 @@ export const initDatabase = async (): Promise<void> => {
         name TEXT NOT NULL,
         total_amount REAL NOT NULL,
         item_count INTEGER NOT NULL,
+        profile_id TEXT NOT NULL,
         saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (shopping_month_id) REFERENCES shopping_months (id)
       );
@@ -102,6 +117,7 @@ export const initDatabase = async (): Promise<void> => {
       CREATE TABLE IF NOT EXISTS shopping_lists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       
@@ -128,6 +144,7 @@ export const initDatabase = async (): Promise<void> => {
         installments INTEGER NOT NULL,
         category TEXT NOT NULL,
         start_date DATETIME NOT NULL,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'active'
       );
@@ -139,6 +156,19 @@ export const initDatabase = async (): Promise<void> => {
         category TEXT NOT NULL,
         frequency TEXT NOT NULL,
         selected_months TEXT,
+        profile_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'active'
+      );
+      
+      CREATE TABLE IF NOT EXISTS recurring_incomes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        category TEXT NOT NULL,
+        frequency TEXT NOT NULL,
+        selected_months TEXT,
+        profile_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'active'
       );
@@ -150,24 +180,7 @@ export const initDatabase = async (): Promise<void> => {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       
-      INSERT OR IGNORE INTO categories (id, name, icon, color, type) VALUES 
-        ('cat_1', 'Alimentação', 'restaurant', '#FF6B6B', 'expense'),
-        ('cat_2', 'Transporte', 'car', '#4ECDC4', 'expense'),
-        ('cat_3', 'Lazer', 'game-controller', '#45B7D1', 'expense'),
-        ('cat_4', 'Saúde', 'medical', '#96CEB4', 'expense'),
-        ('cat_5', 'Salário', 'briefcase', '#FFEAA7', 'income'),
-        ('cat_6', 'Freelance', 'laptop', '#DDA0DD', 'income'),
-        ('cat_7', 'Conta Energia', 'flash', '#FFA500', 'expense'),
-        ('cat_8', 'Gás', 'flame', '#FF4500', 'expense'),
-        ('cat_9', 'Conta Internet', 'wifi', '#4169E1', 'expense'),
-        ('cat_10', 'Manutenção Veículos', 'construct', '#8B4513', 'expense'),
-        ('cat_11', 'Aluguel', 'home', '#8B0000', 'fixed_bill'),
-        ('cat_12', 'IPTU', 'business', '#2F4F4F', 'fixed_bill'),
-        ('cat_13', 'IPVA', 'car', '#4682B4', 'fixed_bill'),
-        ('cat_14', 'Financiamento', 'card', '#800080', 'fixed_bill'),
-        ('cat_15', 'Consórcios', 'people', '#DAA520', 'fixed_bill'),
-        ('cat_16', 'Contas da Casa', 'home-outline', '#8B4513', 'fixed_bill'),
-        ('cat_17', 'Mesada, Rendimentos e Outros', 'cash', '#32CD32', 'income');
+      -- As categorias padrão serão criadas pelo ProfileService quando um perfil for criado
       
       INSERT OR IGNORE INTO settings (key, value) VALUES 
         ('voucher_limit', '0');
@@ -187,6 +200,291 @@ const runMigrations = async (): Promise<void> => {
   if (!db) return;
   
   try {
+    // Verificar se a tabela profiles existe
+    const tables = await db.getAllAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'");
+    if (tables.length === 0) {
+      console.log('Criando tabela profiles...');
+      await db.execAsync(`
+        CREATE TABLE profiles (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          icon TEXT NOT NULL,
+          is_default INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    }
+
+    // Verificar se as colunas profile_id existem nas tabelas principais
+    const addProfileIdColumn = async (tableName: string) => {
+      if (!db) return;
+      
+      const tableInfo = await db.getAllAsync(`PRAGMA table_info(${tableName})`);
+      const columnNames = tableInfo.map((col: any) => col.name);
+      
+      if (!columnNames.includes('profile_id')) {
+        console.log(`Adicionando coluna profile_id na tabela ${tableName}...`);
+        await db.execAsync(`ALTER TABLE ${tableName} ADD COLUMN profile_id TEXT`);
+      }
+    };
+
+    // Adicionar profile_id nas tabelas principais
+    await addProfileIdColumn('categories');
+    await addProfileIdColumn('transactions');
+    await addProfileIdColumn('cards');
+    await addProfileIdColumn('shopping_months');
+    await addProfileIdColumn('products');
+    await addProfileIdColumn('bank_loans');
+    await addProfileIdColumn('fixed_bills');
+    await addProfileIdColumn('recurring_incomes');
+    await addProfileIdColumn('shopping_lists');
+    await addProfileIdColumn('shopping_list_items');
+    await addProfileIdColumn('saved_shopping_lists');
+    
+    // Limpar dados órfãos das tabelas saved_shopping_lists e saved_shopping_items
+    try {
+      console.log('Limpando dados órfãos das listas salvas...');
+      
+      /*
+      // Remover listas salvas que referenciam shopping_months sem profile_id
+      await db.runAsync(`
+        DELETE FROM saved_shopping_lists 
+        WHERE shopping_month_id IN (
+          SELECT id FROM shopping_months WHERE profile_id IS NULL
+        )
+      `);
+      
+      // Remover itens salvos que referenciam listas órfãs
+      await db.runAsync(`
+        DELETE FROM saved_shopping_items 
+        WHERE saved_list_id IN (
+          SELECT ssl.id FROM saved_shopping_lists ssl
+          LEFT JOIN shopping_months sm ON ssl.shopping_month_id = sm.id
+          WHERE sm.id IS NULL OR sm.profile_id IS NULL
+        )
+      `);
+
+      */
+      
+      console.log('Dados órfãos das listas salvas removidos');
+    } catch (cleanupError) {
+      console.error('Erro ao limpar dados órfãos das listas salvas:', cleanupError);
+    }
+
+    // Limpar dados antigos da tabela shopping_months que podem causar conflitos
+    try {
+      if (!db) return;
+      
+      console.log('Limpando dados antigos da tabela shopping_months...');
+      
+      // Verificar se a tabela existe
+      const tableExists = await db.getFirstAsync(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='shopping_months'
+      `);
+      
+      if (!tableExists) {
+        console.log('Tabela shopping_months não existe, pulando limpeza...');
+        return;
+      }
+      
+      // Remover registros com profile_id NULL
+      await db.runAsync('DELETE FROM shopping_months WHERE profile_id IS NULL');
+      console.log('Registros com profile_id NULL removidos');
+      
+      // Verificar se há registros duplicados e manter apenas o mais recente
+      const duplicates = await db.getAllAsync(`
+        SELECT year, month, profile_id, COUNT(*) as count 
+        FROM shopping_months 
+        WHERE profile_id IS NOT NULL 
+        GROUP BY year, month, profile_id 
+        HAVING COUNT(*) > 1
+      `);
+      
+      console.log(`Encontrados ${duplicates.length} grupos de registros duplicados`);
+      
+      for (const duplicate of duplicates as any[]) {
+        console.log(`Removendo registros duplicados para ${duplicate.year}/${duplicate.month} do perfil ${duplicate.profile_id}`);
+        
+        // Buscar o ID do registro mais recente
+        const latestRecord = await db.getFirstAsync(`
+          SELECT id FROM shopping_months 
+          WHERE year = ? AND month = ? AND profile_id = ? 
+          ORDER BY created_at DESC LIMIT 1
+        `, [duplicate.year, duplicate.month, duplicate.profile_id]);
+        
+        if (latestRecord) {
+          // Remover todos os registros exceto o mais recente
+          await db.runAsync(`
+            DELETE FROM shopping_months 
+            WHERE year = ? AND month = ? AND profile_id = ? 
+            AND id != ?
+          `, [duplicate.year, duplicate.month, duplicate.profile_id, (latestRecord as any).id]);
+          
+          console.log(`Mantido registro ${(latestRecord as any).id} para ${duplicate.year}/${duplicate.month}`);
+        }
+      }
+      
+      console.log('Limpeza da tabela shopping_months concluída');
+    } catch (error) {
+      console.error('Erro ao limpar dados antigos da tabela shopping_months:', error);
+    }
+
+    // Corrigir constraint da tabela products para permitir nomes duplicados entre perfis
+    try {
+      if (!db) return;
+      
+      console.log('Corrigindo constraint da tabela products...');
+      
+      // Debug: Verificar estado atual da tabela
+      try {
+        const tableInfo = await db.getAllAsync("PRAGMA table_info(products)");
+        console.log('Colunas da tabela products:', tableInfo.map((col: any) => `${col.name} (${col.type})`));
+        
+        const indexes = await db.getAllAsync("PRAGMA index_list(products)");
+        console.log('Índices da tabela products:', indexes.map((idx: any) => `${idx.name} (unique: ${idx.unique})`));
+      } catch (debugError) {
+        console.log('Erro ao verificar estado da tabela products:', debugError);
+      }
+      
+      // Verificar se a migração já foi executada
+      const migrationCheck = await db.getFirstAsync(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='products_migration_done'
+      `);
+      
+      if (migrationCheck) {
+        console.log('Migração da tabela products já foi executada, pulando...');
+        return;
+      }
+      
+      // Verificar se a tabela products existe
+      const tableExists = await db.getFirstAsync(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='products'
+      `);
+      
+      if (!tableExists) {
+        console.log('Tabela products não existe, criando...');
+        await db.runAsync(`
+          CREATE TABLE products (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT,
+            profile_id TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(name, profile_id)
+          )
+        `);
+        console.log('Tabela products criada com sucesso');
+        
+        // Marcar migração como concluída
+        await db.runAsync(`
+          CREATE TABLE products_migration_done (
+            id TEXT PRIMARY KEY,
+            completed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        await db.runAsync(`
+          INSERT INTO products_migration_done (id) VALUES ('migration_completed')
+        `);
+        return;
+      }
+      
+      // Verificar se há produtos sem profile_id e atribuir um perfil padrão
+      const productsWithoutProfile = await db.getAllAsync(`
+        SELECT COUNT(*) as count FROM products WHERE profile_id IS NULL
+      `);
+      
+      if ((productsWithoutProfile[0] as any)?.count > 0) {
+        console.log('Atribuindo perfil padrão para produtos sem profile_id...');
+        await db.runAsync(`
+          UPDATE products 
+          SET profile_id = 'default_profile' 
+          WHERE profile_id IS NULL
+        `);
+      }
+      
+      // Verificar se a constraint já está correta
+      const tableInfo = await db.getAllAsync("PRAGMA table_info(products)");
+      const hasProfileIdColumn = tableInfo.some((col: any) => col.name === 'profile_id');
+      
+      if (!hasProfileIdColumn) {
+        console.log('Adicionando coluna profile_id na tabela products...');
+        await db.runAsync('ALTER TABLE products ADD COLUMN profile_id TEXT');
+        await db.runAsync("UPDATE products SET profile_id = 'default_profile' WHERE profile_id IS NULL");
+      }
+      
+      // Recriar a tabela com a nova constraint (abordagem mais robusta)
+      console.log('Recriando tabela products com nova constraint...');
+      
+      // Limpar tabela temporária se existir de execução anterior
+      try {
+        await db.runAsync('DROP TABLE IF EXISTS products_temp');
+        console.log('Tabela temporária anterior removida');
+      } catch (cleanupError) {
+        console.log('Erro ao limpar tabela temporária:', cleanupError);
+      }
+      
+      // Criar tabela temporária
+      await db.runAsync(`
+        CREATE TABLE products_temp (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT,
+          profile_id TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(name, profile_id)
+        )
+      `);
+      
+      // Copiar dados existentes
+      await db.runAsync(`
+        INSERT INTO products_temp (id, name, category, profile_id, created_at)
+        SELECT id, name, category, 
+               COALESCE(profile_id, 'default_profile') as profile_id,
+               created_at
+        FROM products
+      `);
+      
+      // Remover tabela antiga
+      await db.runAsync('DROP TABLE products');
+      
+      // Renomear tabela temporária
+      await db.runAsync('ALTER TABLE products_temp RENAME TO products');
+      
+      console.log('Tabela products recriada com sucesso');
+      
+      // Marcar migração como concluída
+      await db.runAsync(`
+        CREATE TABLE products_migration_done (
+          id TEXT PRIMARY KEY,
+          completed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.runAsync(`
+        INSERT INTO products_migration_done (id) VALUES ('migration_completed')
+      `);
+      
+      // Limpeza final da tabela temporária (caso ainda exista)
+      try {
+        await db.runAsync('DROP TABLE IF EXISTS products_temp');
+        console.log('Limpeza final da tabela temporária concluída');
+      } catch (finalCleanupError) {
+        console.log('Erro na limpeza final:', finalCleanupError);
+      }
+      
+    } catch (error) {
+      console.error('Erro ao corrigir constraint da tabela products:', error);
+      
+      // Limpeza de emergência da tabela temporária em caso de erro
+      try {
+        await db.runAsync('DROP TABLE IF EXISTS products_temp');
+        console.log('Limpeza de emergência da tabela temporária concluída');
+      } catch (emergencyCleanupError) {
+        console.log('Erro na limpeza de emergência:', emergencyCleanupError);
+      }
+      
+      // Não falhar a inicialização por causa deste erro
+    }
+
     // Verificar se as novas colunas existem na tabela transactions
     const tableInfo = await db.getAllAsync("PRAGMA table_info(transactions)");
     const columnNames = tableInfo.map((col: any) => col.name);

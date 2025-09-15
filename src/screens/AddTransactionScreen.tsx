@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -15,10 +16,13 @@ import {
 } from 'react-native';
 import { Card } from '../models/Card';
 import { Category } from '../models/Category';
+import { Profile } from '../models/Profile';
 import { BankLoanService } from '../services/BankLoanService';
 import { CardService } from '../services/CardService';
 import { FixedBillService } from '../services/FixedBillService';
+import { RecurringIncomeService } from '../services/RecurringIncomeService';
 import { TransactionService } from '../services/TransactionService';
+import { TransactionValidationService } from '../services/TransactionValidationService';
 import { PaymentMethod } from '../types/Payment';
 import { formatCurrency, formatCurrencyInput, getCurrencyValue } from '../utils/currency';
 
@@ -27,11 +31,14 @@ interface AddTransactionScreenProps {
   onTransactionAdded: () => void;
   onAddCard: () => void;
   onViewFixedBills: () => void;
+  onCategoryManagement: () => void;
+  onTransactionsManagement: () => void;
   newCardId?: string | null;
   onCardSelected: () => void;
+  currentProfile: Profile;
 }
 
-export default function AddTransactionScreen({ onBack, onTransactionAdded, onAddCard, onViewFixedBills, newCardId, onCardSelected }: AddTransactionScreenProps) {
+export default function AddTransactionScreen({ onBack, onTransactionAdded, onAddCard, onViewFixedBills, onCategoryManagement, onTransactionsManagement, newCardId, onCardSelected, currentProfile }: AddTransactionScreenProps) {
   const db = useSQLiteContext();
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -45,6 +52,7 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
   const [categories, setCategories] = useState<Category[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   
   // Campos específicos para empréstimo bancário
   const [totalAmount, setTotalAmount] = useState('');
@@ -58,6 +66,11 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
   const [billName, setBillName] = useState('');
   const [billFrequency, setBillFrequency] = useState<'all_months' | 'specific_months'>('all_months');
   const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
+
+  // Estados para receitas recorrentes
+  const [isRecurringIncome, setIsRecurringIncome] = useState(false);
+  const [incomeFrequency, setIncomeFrequency] = useState<'all_months' | 'specific_months'>('all_months');
+  const [selectedIncomeMonths, setSelectedIncomeMonths] = useState<number[]>([]);
 
   // Salvar estado dos campos no AsyncStorage
   const saveFormState = async () => {
@@ -80,7 +93,10 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
         formattedInterestAmount,
         billName,
         billFrequency,
-        selectedMonths
+        selectedMonths,
+        isRecurringIncome,
+        incomeFrequency,
+        selectedIncomeMonths
       };
       console.log('Salvando estado do formulário:', formState);
       await AsyncStorage.setItem('addTransactionFormState', JSON.stringify(formState));
@@ -115,6 +131,9 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
         setBillName(formState.billName || '');
         setBillFrequency(formState.billFrequency || 'all_months');
         setSelectedMonths(formState.selectedMonths || []);
+        setIsRecurringIncome(formState.isRecurringIncome || false);
+        setIncomeFrequency(formState.incomeFrequency || 'all_months');
+        setSelectedIncomeMonths(formState.selectedIncomeMonths || []);
       }
     } catch (error) {
       console.error('Erro ao carregar estado do formulário:', error);
@@ -133,8 +152,8 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
   const loadData = async () => {
     try {
       const [allCategories, allCards] = await Promise.all([
-        TransactionService.getAllCategories(db),
-        CardService.getAllCards(db)
+        TransactionService.getAllCategories(db, currentProfile.id),
+        CardService.getAllCards(db, currentProfile.id)
       ]);
       setCategories(allCategories);
       setCards(allCards);
@@ -179,7 +198,7 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
       console.log('Salvando estado do formulário...');
       saveFormState();
     }
-  }, [description, amount, formattedAmount, type, selectedCategory, paymentMethod, selectedCard, installments, loanInstallments, totalAmount, formattedTotalAmount, principalAmount, formattedPrincipalAmount, interestAmount, formattedInterestAmount, billName, billFrequency, selectedMonths]);
+  }, [description, amount, formattedAmount, type, selectedCategory, paymentMethod, selectedCard, installments, loanInstallments, totalAmount, formattedTotalAmount, principalAmount, formattedPrincipalAmount, interestAmount, formattedInterestAmount, billName, billFrequency, selectedMonths, isRecurringIncome, incomeFrequency, selectedIncomeMonths]);
 
   const handleAmountChange = (text: string) => {
     const formatted = formatCurrencyInput(text);
@@ -211,6 +230,14 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
     );
   };
 
+  const toggleIncomeMonth = (month: number) => {
+    setSelectedIncomeMonths(prev => 
+      prev.includes(month) 
+        ? prev.filter(m => m !== month)
+        : [...prev, month]
+    );
+  };
+
 
   const getPaymentMethodLabel = (method: PaymentMethod): string => {
     const labels = {
@@ -225,25 +252,34 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
   };
 
   const handleSave = async () => {
+    // Usar o serviço de validação
+    const validationData = {
+      type,
+      description,
+      amount,
+      selectedCategory,
+      paymentMethod,
+      selectedCard,
+      installments,
+      loanInstallments,
+      totalAmount,
+      principalAmount,
+      billName,
+      billFrequency,
+      selectedMonths,
+      isRecurringIncome,
+      incomeFrequency,
+      selectedIncomeMonths
+    };
+
+    const validation = TransactionValidationService.validateTransaction(validationData);
+    if (!validation.isValid) {
+      Alert.alert('Erro', validation.message!);
+      return;
+    }
+
     // Validação específica para contas fixas
     if (type === 'fixed_bills') {
-      if (!billName.trim()) {
-        Alert.alert('Erro', 'Por favor, preencha o nome da conta');
-        return;
-      }
-      if (!selectedCategory) {
-        Alert.alert('Erro', 'Por favor, selecione uma categoria');
-        return;
-      }
-      if (!amount.trim()) {
-        Alert.alert('Erro', 'Por favor, preencha o valor');
-        return;
-      }
-      if (billFrequency === 'specific_months' && selectedMonths.length === 0) {
-        Alert.alert('Erro', 'Por favor, selecione pelo menos um mês');
-        return;
-      }
-
       setIsLoading(true);
       try {
         const numericAmount = parseFloat(amount);
@@ -253,6 +289,7 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
           category: selectedCategory,
           frequency: billFrequency,
           selected_months: billFrequency === 'specific_months' ? selectedMonths : undefined,
+          profile_id: currentProfile.id,
         });
         Alert.alert('Sucesso', 'Conta fixa adicionada com sucesso!', [
           {
@@ -273,39 +310,49 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
       return;
     }
 
-    // Validação para despesas e receitas
-    if (!description.trim() || !selectedCategory) {
-      Alert.alert('Erro', 'Por favor, preencha todos os campos obrigatórios');
-      return;
-    }
-
-    if (type === 'expense' && !paymentMethod) {
-      Alert.alert('Erro', 'Por favor, selecione a forma de pagamento');
-      return;
-    }
-
-    if ((paymentMethod === PaymentMethod.CREDIT_CARD || paymentMethod === PaymentMethod.CARD_BILL) && !selectedCard) {
-      Alert.alert('Erro', 'Por favor, selecione o cartão utilizado');
-      return;
-    }
-
-    // Validações específicas para empréstimo bancário
-    if (paymentMethod === PaymentMethod.BANK_LOAN) {
-      if (!totalAmount.trim() || !principalAmount.trim()) {
-        Alert.alert('Erro', 'Por favor, preencha todos os valores do empréstimo');
+    // Validação específica para receitas recorrentes
+    if (type === 'income' && isRecurringIncome) {
+      if (!description.trim()) {
+        Alert.alert('Erro', 'Por favor, preencha a descrição da receita');
+        return;
+      }
+      if (incomeFrequency === 'specific_months' && selectedIncomeMonths.length === 0) {
+        Alert.alert('Erro', 'Por favor, selecione pelo menos um mês');
         return;
       }
 
-      const totalAmountNum = parseFloat(totalAmount);
-      const principalAmountNum = parseFloat(principalAmount);
+      setIsLoading(true);
+      try {
+        const numericAmount = parseFloat(amount);
+        await RecurringIncomeService.createRecurringIncome(db, {
+          name: description.trim(),
+          amount: numericAmount,
+          category: selectedCategory,
+          frequency: incomeFrequency,
+          selected_months: incomeFrequency === 'specific_months' ? selectedIncomeMonths : undefined,
+          profile_id: currentProfile.id,
+        });
+        Alert.alert('Sucesso', 'Receita recorrente adicionada com sucesso!', [
+          {
+            text: 'OK',
+            onPress: async () => {
+              await clearFormState();
+              onTransactionAdded();
+              onBack();
+            },
+          },
+        ]);
+      } catch (error) {
+        console.error('Erro ao salvar receita recorrente:', error);
+        Alert.alert('Erro', 'Não foi possível salvar a receita recorrente');
+      } finally {
+        setIsLoading(false);
+      }
+      return;
     }
 
     const numericAmount = paymentMethod === PaymentMethod.BANK_LOAN ? 
       parseFloat(totalAmount) : parseFloat(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      Alert.alert('Erro', 'Por favor, insira um valor válido');
-      return;
-    }
 
     setIsLoading(true);
 
@@ -343,6 +390,7 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
         interest_amount: paymentMethod === PaymentMethod.BANK_LOAN ? (parseFloat(totalAmount) - parseFloat(principalAmount)) : undefined,
         installment_amount: paymentMethod === PaymentMethod.BANK_LOAN ? (parseFloat(totalAmount) / loanInstallments) : undefined,
         bank_loan_id: bankLoanId,
+        profile_id: currentProfile.id,
       });
 
       Alert.alert('Sucesso', 'Transação adicionada com sucesso!', [
@@ -381,7 +429,9 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
           <Ionicons name="arrow-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.title}>Nova Continha</Text>
-        <View style={styles.placeholder} />
+        <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettingsMenu(true)}>
+          <Ionicons name="settings-outline" size={24} color="#000" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -394,7 +444,49 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
                 styles.typeButton,
                 type === 'expense' && styles.typeButtonActive,
               ]}
-              onPress={() => setType('expense')}
+              onPress={() => {
+                setType('expense');
+                // Limpar campos específicos de outros tipos
+                const fieldsToClear = TransactionValidationService.clearFormFieldsByType('expense');
+                if (fieldsToClear.paymentMethod !== undefined) {
+                  setPaymentMethod(fieldsToClear.paymentMethod);
+                }
+                if (fieldsToClear.selectedCard !== undefined) {
+                  setSelectedCard(fieldsToClear.selectedCard);
+                }
+                if (fieldsToClear.installments !== undefined) {
+                  setInstallments(fieldsToClear.installments);
+                }
+                if (fieldsToClear.loanInstallments !== undefined) {
+                  setLoanInstallments(fieldsToClear.loanInstallments);
+                }
+                if (fieldsToClear.totalAmount !== undefined) {
+                  setTotalAmount(fieldsToClear.totalAmount);
+                  setFormattedTotalAmount('');
+                }
+                if (fieldsToClear.principalAmount !== undefined) {
+                  setPrincipalAmount(fieldsToClear.principalAmount);
+                  setFormattedPrincipalAmount('');
+                }
+                if (fieldsToClear.billName !== undefined) {
+                  setBillName(fieldsToClear.billName);
+                }
+                if (fieldsToClear.billFrequency !== undefined) {
+                  setBillFrequency(fieldsToClear.billFrequency);
+                }
+                if (fieldsToClear.selectedMonths !== undefined) {
+                  setSelectedMonths(fieldsToClear.selectedMonths);
+                }
+                if (fieldsToClear.isRecurringIncome !== undefined) {
+                  setIsRecurringIncome(fieldsToClear.isRecurringIncome);
+                }
+                if (fieldsToClear.incomeFrequency !== undefined) {
+                  setIncomeFrequency(fieldsToClear.incomeFrequency);
+                }
+                if (fieldsToClear.selectedIncomeMonths !== undefined) {
+                  setSelectedIncomeMonths(fieldsToClear.selectedIncomeMonths);
+                }
+              }}
             >
               <Text style={[
                 styles.typeButtonText,
@@ -408,7 +500,49 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
                 styles.typeButton,
                 type === 'income' && styles.typeButtonActive,
               ]}
-              onPress={() => setType('income')}
+              onPress={() => {
+                setType('income');
+                // Limpar campos específicos de outros tipos
+                const fieldsToClear = TransactionValidationService.clearFormFieldsByType('income');
+                if (fieldsToClear.paymentMethod !== undefined) {
+                  setPaymentMethod(fieldsToClear.paymentMethod);
+                }
+                if (fieldsToClear.selectedCard !== undefined) {
+                  setSelectedCard(fieldsToClear.selectedCard);
+                }
+                if (fieldsToClear.installments !== undefined) {
+                  setInstallments(fieldsToClear.installments);
+                }
+                if (fieldsToClear.loanInstallments !== undefined) {
+                  setLoanInstallments(fieldsToClear.loanInstallments);
+                }
+                if (fieldsToClear.totalAmount !== undefined) {
+                  setTotalAmount(fieldsToClear.totalAmount);
+                  setFormattedTotalAmount('');
+                }
+                if (fieldsToClear.principalAmount !== undefined) {
+                  setPrincipalAmount(fieldsToClear.principalAmount);
+                  setFormattedPrincipalAmount('');
+                }
+                if (fieldsToClear.billName !== undefined) {
+                  setBillName(fieldsToClear.billName);
+                }
+                if (fieldsToClear.billFrequency !== undefined) {
+                  setBillFrequency(fieldsToClear.billFrequency);
+                }
+                if (fieldsToClear.selectedMonths !== undefined) {
+                  setSelectedMonths(fieldsToClear.selectedMonths);
+                }
+                if (fieldsToClear.isRecurringIncome !== undefined) {
+                  setIsRecurringIncome(fieldsToClear.isRecurringIncome);
+                }
+                if (fieldsToClear.incomeFrequency !== undefined) {
+                  setIncomeFrequency(fieldsToClear.incomeFrequency);
+                }
+                if (fieldsToClear.selectedIncomeMonths !== undefined) {
+                  setSelectedIncomeMonths(fieldsToClear.selectedIncomeMonths);
+                }
+              }}
             >
               <Text style={[
                 styles.typeButtonText,
@@ -422,7 +556,40 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
                 styles.typeButton,
                 type === 'fixed_bills' && styles.typeButtonActive,
               ]}
-              onPress={() => setType('fixed_bills')}
+              onPress={() => {
+                setType('fixed_bills');
+                // Limpar campos específicos de outros tipos
+                const fieldsToClear = TransactionValidationService.clearFormFieldsByType('fixed_bills');
+                if (fieldsToClear.paymentMethod !== undefined) {
+                  setPaymentMethod(fieldsToClear.paymentMethod);
+                }
+                if (fieldsToClear.selectedCard !== undefined) {
+                  setSelectedCard(fieldsToClear.selectedCard);
+                }
+                if (fieldsToClear.installments !== undefined) {
+                  setInstallments(fieldsToClear.installments);
+                }
+                if (fieldsToClear.loanInstallments !== undefined) {
+                  setLoanInstallments(fieldsToClear.loanInstallments);
+                }
+                if (fieldsToClear.totalAmount !== undefined) {
+                  setTotalAmount(fieldsToClear.totalAmount);
+                  setFormattedTotalAmount('');
+                }
+                if (fieldsToClear.principalAmount !== undefined) {
+                  setPrincipalAmount(fieldsToClear.principalAmount);
+                  setFormattedPrincipalAmount('');
+                }
+                if (fieldsToClear.isRecurringIncome !== undefined) {
+                  setIsRecurringIncome(fieldsToClear.isRecurringIncome);
+                }
+                if (fieldsToClear.incomeFrequency !== undefined) {
+                  setIncomeFrequency(fieldsToClear.incomeFrequency);
+                }
+                if (fieldsToClear.selectedIncomeMonths !== undefined) {
+                  setSelectedIncomeMonths(fieldsToClear.selectedIncomeMonths);
+                }
+              }}
             >
               <Text style={[
                 styles.typeButtonText,
@@ -463,6 +630,90 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
         </View>
         )}
 
+        {/* Recurring Income - Only for income */}
+        {type === 'income' && (
+          <View style={styles.section}>
+            <View style={styles.checkboxContainer}>
+              <TouchableOpacity 
+                style={styles.checkbox}
+                onPress={() => setIsRecurringIncome(!isRecurringIncome)}
+              >
+                {isRecurringIncome && (
+                  <Ionicons name="checkmark" size={16} color="#2C3E50" />
+                )}
+              </TouchableOpacity>
+              <Text style={styles.checkboxLabel}>Receita recorrente</Text>
+            </View>
+
+            {isRecurringIncome && (
+              <>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Frequência</Text>
+                  <View style={styles.frequencyContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.frequencyButton,
+                        incomeFrequency === 'all_months' && styles.frequencyButtonActive
+                      ]}
+                      onPress={() => setIncomeFrequency('all_months')}
+                    >
+                      <Text style={[
+                        styles.frequencyButtonText,
+                        incomeFrequency === 'all_months' && styles.frequencyButtonTextActive
+                      ]}>
+                        Todos os meses
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={[
+                        styles.frequencyButton,
+                        incomeFrequency === 'specific_months' && styles.frequencyButtonActive
+                      ]}
+                      onPress={() => setIncomeFrequency('specific_months')}
+                    >
+                      <Text style={[
+                        styles.frequencyButtonText,
+                        incomeFrequency === 'specific_months' && styles.frequencyButtonTextActive
+                      ]}>
+                        Meses específicos
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {incomeFrequency === 'specific_months' && (
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Selecionar Meses</Text>
+                    <View style={styles.monthsContainer}>
+                      {[
+                        'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+                        'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'
+                      ].map((month, index) => (
+                        <TouchableOpacity
+                          key={index}
+                          style={[
+                            styles.monthButton,
+                            selectedIncomeMonths.includes(index + 1) && styles.monthButtonActive
+                          ]}
+                          onPress={() => toggleIncomeMonth(index + 1)}
+                        >
+                          <Text style={[
+                            styles.monthButtonText,
+                            selectedIncomeMonths.includes(index + 1) && styles.monthButtonTextActive
+                          ]}>
+                            {month}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+        )}
+
         {/* Payment Method - Only for expenses */}
         {type === 'expense' && (
           <View style={styles.section}>
@@ -477,23 +728,26 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
                   ]}
                   onPress={() => {
                     setPaymentMethod(method);
-                    if (method !== PaymentMethod.CREDIT_CARD && method !== PaymentMethod.CARD_BILL) {
-                      setSelectedCard('');
-                      setInstallments(1);
+                    
+                    // Usar o serviço de validação para limpar campos específicos
+                    const fieldsToClear = TransactionValidationService.clearFormFieldsByPaymentMethod(method);
+                    
+                    if (fieldsToClear.selectedCard !== undefined) {
+                      setSelectedCard(fieldsToClear.selectedCard);
                     }
-                    if (method !== PaymentMethod.BANK_LOAN) {
-                      setLoanInstallments(1);
-                      setTotalAmount('');
+                    if (fieldsToClear.installments !== undefined) {
+                      setInstallments(fieldsToClear.installments);
+                    }
+                    if (fieldsToClear.loanInstallments !== undefined) {
+                      setLoanInstallments(fieldsToClear.loanInstallments);
+                    }
+                    if (fieldsToClear.totalAmount !== undefined) {
+                      setTotalAmount(fieldsToClear.totalAmount);
                       setFormattedTotalAmount('');
-                      setPrincipalAmount('');
-                      setFormattedPrincipalAmount('');
-                      setInterestAmount('');
-                      setFormattedInterestAmount('');
                     }
-                    if ((type as string) !== 'fixed_bills') {
-                      setBillName('');
-                      setBillFrequency('all_months');
-                      setSelectedMonths([]);
+                    if (fieldsToClear.principalAmount !== undefined) {
+                      setPrincipalAmount(fieldsToClear.principalAmount);
+                      setFormattedPrincipalAmount('');
                     }
                   }}
                 >
@@ -832,6 +1086,55 @@ export default function AddTransactionScreen({ onBack, onTransactionAdded, onAdd
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Settings Menu Modal */}
+      <Modal
+        visible={showSettingsMenu}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowSettingsMenu(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSettingsMenu(false)}
+        >
+            <View style={styles.settingsMenu}>
+              <TouchableOpacity
+                style={styles.settingsMenuItem}
+                onPress={() => {
+                  setShowSettingsMenu(false);
+                  onCategoryManagement();
+                }}
+              >
+                <Ionicons name="folder-outline" size={24} color="#2C3E50" />
+                <Text style={styles.settingsMenuText}>Configurações de Categorias</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.settingsMenuItem}
+                onPress={() => {
+                  setShowSettingsMenu(false);
+                  onTransactionsManagement();
+                }}
+              >
+                <Ionicons name="list-outline" size={24} color="#2C3E50" />
+                <Text style={styles.settingsMenuText}>Gerenciar Transações</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.settingsMenuItem}
+                onPress={() => {
+                  setShowSettingsMenu(false);
+                  onViewFixedBills();
+                }}
+              >
+                <Ionicons name="receipt-outline" size={24} color="#2C3E50" />
+                <Text style={styles.settingsMenuText}>Ver Contas Fixas</Text>
+              </TouchableOpacity>
+            </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -858,9 +1161,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#000000',
-  },
-  placeholder: {
-    width: 40,
   },
   content: {
     flex: 1,
@@ -1151,5 +1451,58 @@ const styles = StyleSheet.create({
   },
   monthButtonTextActive: {
     color: '#FFF',
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderWidth: 2,
+    borderColor: '#2C3E50',
+    borderRadius: 4,
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#2C3E50',
+  },
+  settingsButton: {
+    padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsMenu: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    minWidth: 250,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  settingsMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    gap: 12,
+  },
+  settingsMenuText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#2C3E50',
   },
 });

@@ -7,12 +7,13 @@ export class FixedBillService {
     category: string;
     frequency: 'all_months' | 'specific_months';
     selected_months?: number[];
+    profile_id: string;
   }): Promise<FixedBill> {
     const id = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
     
     const sql = `INSERT INTO fixed_bills (
-      id, name, amount, category, frequency, selected_months, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+      id, name, amount, category, frequency, selected_months, profile_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
     
     const selectedMonthsJson = billData.selected_months ? JSON.stringify(billData.selected_months) : null;
     
@@ -23,6 +24,7 @@ export class FixedBillService {
       billData.category,
       billData.frequency,
       selectedMonthsJson,
+      billData.profile_id,
       'active'
     ];
     
@@ -42,16 +44,16 @@ export class FixedBillService {
     return newBill;
   }
 
-  static async getAllFixedBills(db: any): Promise<FixedBill[]> {
-    return await db.getAllAsync('SELECT * FROM fixed_bills ORDER BY created_at DESC');
+  static async getAllFixedBills(db: any, profileId: string): Promise<FixedBill[]> {
+    return await db.getAllAsync('SELECT * FROM fixed_bills WHERE profile_id = ? ORDER BY created_at DESC', [profileId]);
   }
 
-  static async getActiveFixedBills(db: any): Promise<FixedBill[]> {
-    return await db.getAllAsync("SELECT * FROM fixed_bills WHERE status = 'active' ORDER BY created_at DESC");
+  static async getActiveFixedBills(db: any, profileId: string): Promise<FixedBill[]> {
+    return await db.getAllAsync("SELECT * FROM fixed_bills WHERE status = 'active' AND profile_id = ? ORDER BY created_at DESC", [profileId]);
   }
 
-  static async getFixedBillsForMonth(db: any, month: number): Promise<FixedBill[]> {
-    const bills = await this.getActiveFixedBills(db);
+  static async getFixedBillsForMonth(db: any, month: number, profileId: string): Promise<FixedBill[]> {
+    const bills = await this.getActiveFixedBills(db, profileId);
     
     return bills.filter(bill => {
       if (bill.frequency === 'all_months') {
@@ -113,8 +115,8 @@ export class FixedBillService {
     await db.runAsync('DELETE FROM fixed_bills WHERE id = ?', [id]);
   }
 
-  static async getTotalFixedBillsForMonth(db: any, month: number): Promise<number> {
-    const bills = await this.getFixedBillsForMonth(db, month);
+  static async getTotalFixedBillsForMonth(db: any, month: number, profileId: string): Promise<number> {
+    const bills = await this.getFixedBillsForMonth(db, month, profileId);
     return bills.reduce((total, bill) => total + bill.amount, 0);
   }
 }

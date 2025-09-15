@@ -6,12 +6,12 @@ import { ShoppingItem } from '../models/ShoppingItem';
 import { ShoppingMonth } from '../models/ShoppingMonth';
 
 export class ShoppingService {
-  static async getOrCreateShoppingMonth(db: SQLiteDatabase, year: number, month: number): Promise<ShoppingMonth> {
+  static async getOrCreateShoppingMonth(db: SQLiteDatabase, year: number, month: number, profileId: string): Promise<ShoppingMonth> {
     try {
       // Tentar buscar o mês existente
       const existingMonth = await db.getFirstAsync<ShoppingMonth>(
-        'SELECT * FROM shopping_months WHERE year = ? AND month = ?',
-        [year, month]
+        'SELECT * FROM shopping_months WHERE year = ? AND month = ? AND profile_id = ?',
+        [year, month, profileId]
       );
 
       if (existingMonth) {
@@ -19,17 +19,57 @@ export class ShoppingService {
       }
 
       // Criar novo mês se não existir
-      const id = `shopping_${year}_${month}`;
-      await db.runAsync(
-        'INSERT INTO shopping_months (id, year, month, voucher_limit) VALUES (?, ?, ?, ?)',
-        [id, year, month, 0]
-      );
+      const id = `shopping_${year}_${month}_${profileId}`;
+      
+      try {
+        await db.runAsync(
+          'INSERT INTO shopping_months (id, year, month, voucher_limit, profile_id) VALUES (?, ?, ?, ?, ?)',
+          [id, year, month, 0, profileId]
+        );
+      } catch (insertError: any) {
+        // Se houve erro de constraint, tentar buscar novamente (pode ter sido criado por outra thread)
+        if (insertError.message?.includes('UNIQUE constraint failed')) {
+          console.log('Constraint UNIQUE falhou, tentando buscar o registro existente...');
+          
+          // Tentar buscar com profile_id primeiro
+          let existingMonthAfterError = await db.getFirstAsync<ShoppingMonth>(
+            'SELECT * FROM shopping_months WHERE year = ? AND month = ? AND profile_id = ?',
+            [year, month, profileId]
+          );
+          
+          // Se não encontrou, tentar buscar sem profile_id (dados antigos)
+          if (!existingMonthAfterError) {
+            existingMonthAfterError = await db.getFirstAsync<ShoppingMonth>(
+              'SELECT * FROM shopping_months WHERE year = ? AND month = ?',
+              [year, month]
+            );
+          }
+          
+          if (existingMonthAfterError) {
+            console.log('Registro existente encontrado:', existingMonthAfterError.id);
+            
+            // Se o registro não tem profile_id, atualizar
+            if (!existingMonthAfterError.profile_id) {
+              console.log('Atualizando profile_id do registro existente...');
+              await db.runAsync(
+                'UPDATE shopping_months SET profile_id = ? WHERE id = ?',
+                [profileId, existingMonthAfterError.id]
+              );
+              existingMonthAfterError.profile_id = profileId;
+            }
+            
+            return existingMonthAfterError;
+          }
+        }
+        throw insertError;
+      }
 
       return {
         id,
         year,
         month,
         voucher_limit: 0,
+        profile_id: profileId,
         created_at: new Date().toISOString()
       };
     } catch (error) {
@@ -57,7 +97,8 @@ export class ShoppingService {
     quantity: number = 1,
     productName?: string,
     fromListId?: string,
-    category?: string
+    category?: string,
+    profileId?: string
   ): Promise<ShoppingItem> {
     try {
       const id = `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -65,20 +106,51 @@ export class ShoppingService {
 
       // Se tem nome do produto, criar ou buscar produto
       if (productName && productName.trim()) {
-        const existingProduct = await db.getFirstAsync<Product>(
-          'SELECT * FROM products WHERE name = ?',
-          [productName.trim()]
-        );
-
-        if (existingProduct) {
-          productId = existingProduct.id;
-        } else {
-          const productIdNew = `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          await db.runAsync(
-            'INSERT INTO products (id, name, category) VALUES (?, ?, ?)',
-            [productIdNew, productName.trim(), category || null]
+        try {
+          const existingProduct = await db.getFirstAsync<Product>(
+            'SELECT * FROM products WHERE name = ? AND profile_id = ?',
+            [productName.trim(), profileId || '']
           );
-          productId = productIdNew;
+
+          if (existingProduct) {
+            productId = existingProduct.id;
+          } else {
+            const productIdNew = `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            await db.runAsync(
+              'INSERT INTO products (id, name, category, profile_id) VALUES (?, ?, ?, ?)',
+              [productIdNew, productName.trim(), category || null, profileId || '']
+            );
+            productId = productIdNew;
+          }
+        } catch (productError: any) {
+          // Se houve erro de constraint, tentar buscar o produto existente
+          if (productError.message?.includes('UNIQUE constraint failed')) {
+            console.log('Constraint UNIQUE falhou para produto, tentando buscar existente...');
+            
+            // Tentar buscar com profile_id primeiro
+            let existingProduct = await db.getFirstAsync<Product>(
+              'SELECT * FROM products WHERE name = ? AND profile_id = ?',
+              [productName.trim(), profileId || '']
+            );
+            
+            // Se não encontrou, tentar buscar sem profile_id (dados antigos)
+            if (!existingProduct) {
+              existingProduct = await db.getFirstAsync<Product>(
+                'SELECT * FROM products WHERE name = ?',
+                [productName.trim()]
+              );
+            }
+            
+            if (existingProduct) {
+              productId = existingProduct.id;
+              console.log('Produto existente encontrado:', existingProduct.name);
+            } else {
+              console.error('Erro ao criar produto e não foi possível encontrar existente:', productError);
+              throw productError;
+            }
+          } else {
+            throw productError;
+          }
         }
       }
 
@@ -140,10 +212,11 @@ export class ShoppingService {
     }
   }
 
-  static async getAllProducts(db: SQLiteDatabase): Promise<Product[]> {
+  static async getAllProducts(db: SQLiteDatabase, profileId: string): Promise<Product[]> {
     try {
       const products = await db.getAllAsync<Product>(
-        'SELECT * FROM products ORDER BY name ASC'
+        'SELECT * FROM products WHERE profile_id = ? ORDER BY name ASC',
+        [profileId]
       );
       return products;
     } catch (error) {
@@ -152,11 +225,11 @@ export class ShoppingService {
     }
   }
 
-  static async searchProducts(db: SQLiteDatabase, query: string): Promise<Product[]> {
+  static async searchProducts(db: SQLiteDatabase, query: string, profileId: string): Promise<Product[]> {
     try {
       const products = await db.getAllAsync<Product>(
-        'SELECT * FROM products WHERE name LIKE ? ORDER BY name ASC LIMIT 10',
-        [`%${query}%`]
+        'SELECT * FROM products WHERE name LIKE ? AND profile_id = ? ORDER BY name ASC LIMIT 10',
+        [`%${query}%`, profileId]
       );
       return products;
     } catch (error) {
@@ -169,7 +242,8 @@ export class ShoppingService {
     db: SQLiteDatabase, 
     shoppingMonthId: string, 
     listName: string, 
-    items: ShoppingItem[]
+    items: ShoppingItem[],
+    profileId: string
   ): Promise<SavedShoppingList> {
     try {
       const savedListId = `saved_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -178,8 +252,8 @@ export class ShoppingService {
 
       // Criar a lista salva
       await db.runAsync(
-        'INSERT INTO saved_shopping_lists (id, shopping_month_id, name, total_amount, item_count) VALUES (?, ?, ?, ?, ?)',
-        [savedListId, shoppingMonthId, listName, totalAmount, itemCount]
+        'INSERT INTO saved_shopping_lists (id, shopping_month_id, name, total_amount, item_count, profile_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [savedListId, shoppingMonthId, listName, totalAmount, itemCount, profileId]
       );
 
       // Salvar os itens da lista
@@ -197,6 +271,7 @@ export class ShoppingService {
         name: listName,
         total_amount: totalAmount,
         item_count: itemCount,
+        profile_id: profileId,
         saved_at: new Date().toISOString()
       };
     } catch (error) {
@@ -205,11 +280,11 @@ export class ShoppingService {
     }
   }
 
-  static async getSavedShoppingLists(db: SQLiteDatabase, shoppingMonthId: string): Promise<SavedShoppingList[]> {
+  static async getSavedShoppingLists(db: SQLiteDatabase, shoppingMonthId: string, profileId: string): Promise<SavedShoppingList[]> {
     try {
       const lists = await db.getAllAsync<SavedShoppingList>(
-        'SELECT * FROM saved_shopping_lists WHERE shopping_month_id = ? ORDER BY saved_at DESC',
-        [shoppingMonthId]
+        'SELECT * FROM saved_shopping_lists WHERE shopping_month_id = ? AND profile_id = ? ORDER BY saved_at DESC',
+        [shoppingMonthId, profileId]
       );
       return lists;
     } catch (error) {

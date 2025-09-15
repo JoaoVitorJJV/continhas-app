@@ -1,18 +1,25 @@
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import React, { useState } from 'react';
+import { useSQLite } from '../contexts/SQLiteContext';
+import { Profile } from '../models/Profile';
 import AddCardScreen from '../screens/AddCardScreen';
 import AddTransactionScreen from '../screens/AddTransactionScreen';
+import CategoryManagementScreen from '../screens/CategoryManagementScreen';
 import FixedBillsScreen from '../screens/FixedBillsScreen';
 import HomeScreen from '../screens/HomeScreen';
 import LoadingScreen from '../screens/LoadingScreen';
 import MyExpensesScreen from '../screens/MyExpensesScreen';
 import MyShoppingScreen from '../screens/MyShoppingScreen';
 import NewShoppingScreen from '../screens/NewShoppingScreen';
+import ProfileManagementScreen from '../screens/ProfileManagementScreen';
+import ProfileSelectionScreen from '../screens/ProfileSelectionScreen';
 import SavingsScreen from '../screens/SavingsScreen';
 import ShoppingListScreen from '../screens/ShoppingListScreen';
 import ShoppingScreen from '../screens/ShoppingScreen';
 import ShoppingSettingsScreen from '../screens/ShoppingSettingsScreen';
+import TransactionsManagementScreen from '../screens/TransactionsManagementScreen';
+import { ProfileService } from '../services/ProfileService';
 
 export type RootStackParamList = {
   Loading: undefined;
@@ -22,6 +29,10 @@ export type RootStackParamList = {
   MyExpenses: undefined;
   FixedBills: undefined;
   Savings: undefined;
+  CategoryManagement: undefined;
+  TransactionsManagement: undefined;
+  ProfileManagement: undefined;
+  ProfileSelection: undefined;
   
   Shopping: undefined;
   ShoppingList: undefined;
@@ -33,11 +44,38 @@ export type RootStackParamList = {
 const Stack = createStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
+  const { database: db } = useSQLite();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [newCardId, setNewCardId] = useState<string | null>(null);
+  const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
 
-  const handleLoadingComplete = () => {
+  const loadCurrentProfile = async () => {
+    if (!db) return;
+    
+    try {
+      const profile = await ProfileService.getDefaultProfile(db);
+      if (!profile) {
+        // Se não há perfil padrão, criar um
+        const newProfile = await ProfileService.initializeDefaultProfile(db);
+        setCurrentProfile(newProfile);
+      } else {
+        setCurrentProfile(profile);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar perfil:', error);
+      // Criar perfil padrão em caso de erro
+      try {
+        const newProfile = await ProfileService.initializeDefaultProfile(db);
+        setCurrentProfile(newProfile);
+      } catch (createError) {
+        console.error('Erro ao criar perfil padrão:', createError);
+      }
+    }
+  };
+
+  const handleLoadingComplete = async () => {
+    await loadCurrentProfile();
     setIsLoading(false);
   };
 
@@ -54,8 +92,13 @@ export default function AppNavigator() {
     console.log('Cartão adicionado - dados atualizados');
   };
 
+  const handleProfileChanged = async () => {
+    await loadCurrentProfile();
+    setRefreshKey(prev => prev + 1);
+  };
 
-  if (isLoading) {
+
+  if (isLoading || !currentProfile) {
     return <LoadingScreen onLoadingComplete={handleLoadingComplete} />
   }
 
@@ -72,6 +115,7 @@ export default function AppNavigator() {
             <HomeScreen
               {...props}
               key={refreshKey}
+              currentProfile={currentProfile}
               onAddTransaction={() => props.navigation.navigate('AddTransaction')}
               onViewDetails={() => {
                 // Implementar navegação para detalhes
@@ -80,6 +124,7 @@ export default function AppNavigator() {
               onMyExpenses={() => props.navigation.navigate('MyExpenses')}
               onSavings={() => props.navigation.navigate('Savings')}
               onShopping={() => props.navigation.navigate('Shopping')}
+              onProfileManagement={() => props.navigation.navigate('ProfileManagement')}
             />
           )}
         </Stack.Screen>
@@ -91,8 +136,11 @@ export default function AppNavigator() {
               onTransactionAdded={handleTransactionAdded}
               onAddCard={() => props.navigation.navigate('AddCard')}
               onViewFixedBills={() => props.navigation.navigate('FixedBills')}
+              onCategoryManagement={() => props.navigation.navigate('CategoryManagement')}
+              onTransactionsManagement={() => props.navigation.navigate('TransactionsManagement')}
               newCardId={newCardId}
               onCardSelected={() => setNewCardId(null)}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -102,6 +150,7 @@ export default function AppNavigator() {
               {...props}
               onBack={() => props.navigation.goBack()}
               onCardAdded={(cardId) => handleCardAdded(cardId)}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -111,6 +160,7 @@ export default function AppNavigator() {
               {...props}
               onBack={() => props.navigation.goBack()}
               onViewFixedBills={() => props.navigation.navigate('FixedBills')}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -119,6 +169,7 @@ export default function AppNavigator() {
             <FixedBillsScreen
               {...props}
               onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -127,6 +178,7 @@ export default function AppNavigator() {
             <SavingsScreen
               {...props}
               onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -157,6 +209,7 @@ export default function AppNavigator() {
               onNewShopping={() => {}}
               onShoppingList={() => props.navigation.navigate('ShoppingList')}
               onSettings={() => props.navigation.navigate('ShoppingSettings')}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -165,6 +218,7 @@ export default function AppNavigator() {
             <ShoppingListScreen
               {...props}
               onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
             />
           )}
         </Stack.Screen>
@@ -173,6 +227,50 @@ export default function AppNavigator() {
             <MyShoppingScreen
               {...props}
               onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="CategoryManagement">
+          {(props) => (
+            <CategoryManagementScreen
+              {...props}
+              onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="TransactionsManagement">
+          {(props) => (
+            <TransactionsManagementScreen
+              {...props}
+              onBack={() => props.navigation.goBack()}
+              currentProfile={currentProfile}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ProfileManagement">
+          {(props) => (
+            <ProfileManagementScreen
+              {...props}
+              onBack={() => props.navigation.goBack()}
+              onProfileChanged={(profile) => {
+                setCurrentProfile(profile);
+                handleProfileChanged();
+              }}
+              currentProfile={currentProfile}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="ProfileSelection">
+          {(props) => (
+            <ProfileSelectionScreen
+              {...props}
+              onProfileSelected={(profile) => {
+                setCurrentProfile(profile);
+                handleProfileChanged();
+                props.navigation.goBack();
+              }}
             />
           )}
         </Stack.Screen>

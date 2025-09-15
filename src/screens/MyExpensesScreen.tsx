@@ -23,6 +23,7 @@ const { width } = Dimensions.get('window');
 interface MyExpensesScreenProps {
   onBack: () => void;
   onViewFixedBills: () => void;
+  currentProfile: Profile;
 }
 
 interface CategoryData {
@@ -31,7 +32,7 @@ interface CategoryData {
   color: string;
 }
 
-export default function MyExpensesScreen({ onBack, onViewFixedBills }: MyExpensesScreenProps) {
+export default function MyExpensesScreen({ onBack, onViewFixedBills, currentProfile }: MyExpensesScreenProps) {
   const db = useSQLiteContext();
   const [expenses, setExpenses] = useState<Transaction[]>([]);
   const [totalExpenses, setTotalExpenses] = useState(0);
@@ -69,9 +70,9 @@ export default function MyExpensesScreen({ onBack, onViewFixedBills }: MyExpense
       let expenseTransactions: Transaction[];
       
       if (selectedCardId) {
-        expenseTransactions = await TransactionService.getExpensesByMonthAndCard(db, selectedYear, selectedMonth, selectedCardId);
+        expenseTransactions = await TransactionService.getExpensesByMonthAndCard(db, selectedYear, selectedMonth, selectedCardId, currentProfile.id);
       } else {
-        expenseTransactions = await TransactionService.getExpensesByMonth(db, selectedYear, selectedMonth);
+        expenseTransactions = await TransactionService.getExpensesByMonth(db, selectedYear, selectedMonth, currentProfile.id);
       }
       
       setExpenses(expenseTransactions);
@@ -85,7 +86,7 @@ export default function MyExpensesScreen({ onBack, onViewFixedBills }: MyExpense
 
   const loadCards = async () => {
     try {
-      const allCards = await CardService.getAllCards(db);
+      const allCards = await CardService.getAllCards(db, currentProfile.id);
       setCards(allCards);
     } catch (error) {
       console.error('Erro ao carregar cartões:', error);
@@ -113,15 +114,7 @@ export default function MyExpensesScreen({ onBack, onViewFixedBills }: MyExpense
 
   const loadIncome = async () => {
     try {
-      const startDate = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`;
-      const endDate = `${selectedYear}-${(selectedMonth + 1).toString().padStart(2, '0')}-01`;
-      
-      const incomeTransactions = await db.getAllAsync(
-        'SELECT amount FROM transactions WHERE date >= ? AND date < ? AND type = ?',
-        [startDate, endDate, 'income']
-      );
-      
-      const total = incomeTransactions.reduce((sum: number, transaction: any) => sum + transaction.amount, 0);
+      const total = await TransactionService.getTotalIncomesByMonth(db, selectedYear, selectedMonth, currentProfile.id);
       setTotalIncome(total);
     } catch (error) {
       console.error('Erro ao carregar receitas:', error);

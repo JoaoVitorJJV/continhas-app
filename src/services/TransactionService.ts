@@ -1,23 +1,25 @@
 import { Category } from '../models/Category';
 import { Transaction } from '../models/Transaction';
+import { CategoryService } from './CategoryService';
 import { FixedBillService } from './FixedBillService';
+import { RecurringIncomeService } from './RecurringIncomeService';
 
 export class TransactionService {
-  static async getAllTransactions(db: any): Promise<Transaction[]> {
-    return await db.getAllAsync('SELECT * FROM transactions ORDER BY date DESC');
+  static async getAllTransactions(db: any, profileId: string): Promise<Transaction[]> {
+    return await db.getAllAsync('SELECT * FROM transactions WHERE profile_id = ? ORDER BY date DESC', [profileId]);
   }
 
-  static async getTransactionsByMonth(db: any, year: number, month: number): Promise<Transaction[]> {
+  static async getTransactionsByMonth(db: any, year: number, month: number, profileId: string): Promise<Transaction[]> {
     const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
     const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
     
     return await db.getAllAsync(
-      'SELECT * FROM transactions WHERE date >= ? AND date < ? ORDER BY date DESC',
-      [startDate, endDate]
+      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND profile_id = ? ORDER BY date DESC',
+      [startDate, endDate, profileId]
     );
   }
 
-  static async getRecentTransactions(db: any, limit: number = 5): Promise<Transaction[]> {
+  static async getRecentTransactions(db: any, limit: number = 5, profileId: string): Promise<Transaction[]> {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -26,8 +28,8 @@ export class TransactionService {
 
     // Buscar transações do mês atual, incluindo parcelas
     const transactions = await db.getAllAsync(
-      'SELECT * FROM transactions WHERE date >= ? AND date < ? ORDER BY date DESC LIMIT ?',
-      [startDate, endDate, limit]
+      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND profile_id = ? ORDER BY date DESC LIMIT ?',
+      [startDate, endDate, profileId, limit]
     );
 
     return transactions;
@@ -47,6 +49,7 @@ export class TransactionService {
     interest_amount?: number;
     installment_amount?: number;
     bank_loan_id?: string;
+    profile_id: string;
   }): Promise<Transaction> {
     const id = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
     const dateStr = transactionData.date.toISOString().split('T')[0];
@@ -77,8 +80,8 @@ export class TransactionService {
           const sql = `INSERT INTO transactions (
             id, description, amount, type, category, date, 
             payment_method, card_id, installments, parent_transaction_id,
-            total_amount, principal_amount, interest_amount, bank_loan_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            total_amount, principal_amount, interest_amount, bank_loan_id, profile_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
           
           const params = [
             installmentId,
@@ -94,7 +97,8 @@ export class TransactionService {
             totalAmount,
             principalAmount,
             interestAmount,
-            bankLoanId
+            bankLoanId,
+            transactionData.profile_id
           ];
           
           console.log('Executando SQL:', sql);
@@ -124,8 +128,8 @@ export class TransactionService {
         const sql = `INSERT INTO transactions (
           id, description, amount, type, category, date, 
           payment_method, card_id, installments,
-          total_amount, principal_amount, interest_amount, bank_loan_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          total_amount, principal_amount, interest_amount, bank_loan_id, profile_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         const params = [
           id,
@@ -140,7 +144,8 @@ export class TransactionService {
           totalAmount,
           principalAmount,
           interestAmount,
-          bankLoanId
+          bankLoanId,
+          transactionData.profile_id
         ];
         
         console.log('Executando SQL:', sql);
@@ -173,13 +178,13 @@ export class TransactionService {
     }
   }
 
-  static async getMonthlyBalance(db: any, year: number, month: number): Promise<number> {
+  static async getMonthlyBalance(db: any, year: number, month: number, profileId: string): Promise<number> {
     const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
     const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
     
     const transactions = await db.getAllAsync(
-      'SELECT type, amount FROM transactions WHERE date >= ? AND date < ?',
-      [startDate, endDate]
+      'SELECT type, amount FROM transactions WHERE date >= ? AND date < ? AND profile_id = ?',
+      [startDate, endDate, profileId]
     );
 
     let balance = 0;
@@ -192,24 +197,30 @@ export class TransactionService {
     });
 
     // Adicionar contas fixas do mês
-    const fixedBills = await FixedBillService.getFixedBillsForMonth(db, month);
+    const fixedBills = await FixedBillService.getFixedBillsForMonth(db, month, profileId);
     const fixedBillsTotal = fixedBills.reduce((total, bill) => total + bill.amount, 0);
     balance -= fixedBillsTotal;
+
+    // Adicionar receitas recorrentes do mês
+    const recurringIncomes = await RecurringIncomeService.getRecurringIncomesForMonth(db, month, profileId);
+    const recurringIncomesTotal = recurringIncomes.reduce((total, income) => total + income.amount, 0);
+    balance += recurringIncomesTotal;
 
     return balance;
   }
 
-  static async getTotalDebts(db: any): Promise<number> {
+  static async getTotalDebts(db: any, profileId: string): Promise<number> {
     const result = await db.getFirstAsync(
-      'SELECT SUM(amount) as total FROM transactions WHERE type = ?',
-      ['expense']
+      'SELECT SUM(amount) as total FROM transactions WHERE type = ? AND profile_id = ?',
+      ['expense', profileId]
     );
     return result?.total || 0;
   }
 
-  static async getTotalBalance(db: any): Promise<number> {
+  static async getTotalBalance(db: any, profileId: string): Promise<number> {
     const results = await db.getAllAsync(
-      'SELECT type, SUM(amount) as total FROM transactions GROUP BY type'
+      'SELECT type, SUM(amount) as total FROM transactions WHERE profile_id = ? GROUP BY type',
+      [profileId]
     );
 
     let balance = 0;
@@ -222,32 +233,61 @@ export class TransactionService {
     });
 
     // Adicionar todas as contas fixas ativas (todos os meses)
-    const allFixedBills = await FixedBillService.getActiveFixedBills(db);
+    const allFixedBills = await FixedBillService.getActiveFixedBills(db, profileId);
     const allFixedBillsTotal = allFixedBills.reduce((total, bill) => total + bill.amount, 0);
     balance -= allFixedBillsTotal;
+
+    // Adicionar todas as receitas recorrentes ativas (todos os meses)
+    const allRecurringIncomes = await RecurringIncomeService.getAllRecurringIncomes(db, profileId);
+    const allRecurringIncomesTotal = allRecurringIncomes.reduce((total, income) => total + income.amount, 0);
+    balance += allRecurringIncomesTotal;
 
     return balance;
   }
 
-  static async getExpensesByMonth(db: any, year: number, month: number): Promise<Transaction[]> {
+  static async getIncomesByMonth(db: any, year: number, month: number, profileId: string): Promise<Transaction[]> {
     const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
     const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
 
     const transactions = await db.getAllAsync(
-      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND type = ? ORDER BY date DESC',
-      [startDate, endDate, 'expense']
+      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND type = ? AND profile_id = ? ORDER BY date DESC',
+      [startDate, endDate, 'income', profileId]
     );
 
     return transactions;
   }
 
-  static async getExpensesByMonthAndCard(db: any, year: number, month: number, cardId: string): Promise<Transaction[]> {
+  static async getTotalIncomesByMonth(db: any, year: number, month: number, profileId: string): Promise<number> {
+    // Receitas de transações normais
+    const transactions = await this.getIncomesByMonth(db, year, month, profileId);
+    const transactionsTotal = transactions.reduce((total, transaction) => total + transaction.amount, 0);
+
+    // Receitas recorrentes do mês
+    const recurringIncomes = await RecurringIncomeService.getRecurringIncomesForMonth(db, month, profileId);
+    const recurringIncomesTotal = recurringIncomes.reduce((total, income) => total + income.amount, 0);
+
+    return transactionsTotal + recurringIncomesTotal;
+  }
+
+  static async getExpensesByMonth(db: any, year: number, month: number, profileId: string): Promise<Transaction[]> {
     const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
     const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
 
     const transactions = await db.getAllAsync(
-      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND type = ? AND card_id = ? ORDER BY date DESC',
-      [startDate, endDate, 'expense', cardId]
+      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND type = ? AND profile_id = ? ORDER BY date DESC',
+      [startDate, endDate, 'expense', profileId]
+    );
+
+    return transactions;
+  }
+
+  static async getExpensesByMonthAndCard(db: any, year: number, month: number, cardId: string, profileId: string): Promise<Transaction[]> {
+    const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
+    const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01`;
+
+    const transactions = await db.getAllAsync(
+      'SELECT * FROM transactions WHERE date >= ? AND date < ? AND type = ? AND card_id = ? AND profile_id = ? ORDER BY date DESC',
+      [startDate, endDate, 'expense', cardId, profileId]
     );
 
     return transactions;
@@ -278,7 +318,7 @@ export class TransactionService {
     }
   }
 
-  static async getAllCategories(db: any): Promise<Category[]> {
-    return await db.getAllAsync('SELECT * FROM categories ORDER BY name');
+  static async getAllCategories(db: any, profileId: string): Promise<Category[]> {
+    return await CategoryService.getAllCategories(db, profileId);
   }
 }

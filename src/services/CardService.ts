@@ -2,8 +2,8 @@ import { Card } from '../models/Card';
 import { CardBrand } from '../types/Payment';
 
 export class CardService {
-  static async getAllCards(db: any): Promise<Card[]> {
-    return await db.getAllAsync('SELECT * FROM cards ORDER BY nickname');
+  static async getAllCards(db: any, profileId: string): Promise<Card[]> {
+    return await db.getAllAsync('SELECT * FROM cards WHERE profile_id = ? ORDER BY nickname', [profileId]);
   }
 
   static async addCard(db: any, cardData: {

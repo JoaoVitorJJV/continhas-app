@@ -18,6 +18,7 @@ import {
     View
 } from 'react-native';
 import { PRODUCT_CATEGORIES } from '../enums/ProductCategory';
+import { Profile } from '../models/Profile';
 import { ShoppingList } from '../models/ShoppingList';
 import { ShoppingListItem } from '../models/ShoppingListItem';
 import { ShoppingListService } from '../services/ShoppingListService';
@@ -26,9 +27,10 @@ const { width } = Dimensions.get('window');
 
 interface ShoppingListScreenProps {
   onBack: () => void;
+  currentProfile: Profile;
 }
 
-export default function ShoppingListScreen({ onBack }: ShoppingListScreenProps) {
+export default function ShoppingListScreen({ onBack, currentProfile }: ShoppingListScreenProps) {
   const db = useSQLiteContext();
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>([]);
   const [selectedList, setSelectedList] = useState<ShoppingList | null>(null);
@@ -55,7 +57,7 @@ export default function ShoppingListScreen({ onBack }: ShoppingListScreenProps) 
 
   const loadShoppingLists = async () => {
     try {
-      const lists = await ShoppingListService.getAllShoppingLists(db);
+      const lists = await ShoppingListService.getAllShoppingLists(db, currentProfile.id);
       setShoppingLists(lists);
       if (lists.length > 0 && !selectedList) {
         setSelectedList(lists[0]);
@@ -83,7 +85,7 @@ export default function ShoppingListScreen({ onBack }: ShoppingListScreenProps) 
     }
 
     try {
-      const newList = await ShoppingListService.createShoppingList(db, newListName.trim());
+      const newList = await ShoppingListService.createShoppingList(db, newListName.trim(), currentProfile.id);
       setShoppingLists(prev => [newList, ...prev]);
       setSelectedList(newList);
       setNewListName('');
@@ -138,7 +140,8 @@ export default function ShoppingListScreen({ onBack }: ShoppingListScreenProps) 
         quantity,
         duration,
         undefined,
-        itemCategory || undefined
+        itemCategory || undefined,
+        currentProfile.id
       );
       
       setItemName('');

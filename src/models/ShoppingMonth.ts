@@ -3,5 +3,6 @@ export interface ShoppingMonth {
   year: number;
   month: number;
   voucher_limit: number;
+  profile_id: string;
   created_at: string;
 }
